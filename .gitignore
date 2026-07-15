@@ -44,5 +44,9 @@ node_modules/
 .dart_tool/
 .packages
 
+# Secrets / API keys
+.env
+**/serviceAccountKey.json
+
 # Data files (if you want to ignore them, uncomment the next line)
 # data/

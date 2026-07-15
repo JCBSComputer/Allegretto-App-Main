@@ -32,6 +32,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:google_api_availability/google_api_availability.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'firebase_options.dart';
 import 'platform_checks.dart';
 
@@ -60,11 +61,11 @@ const AndroidNotificationChannel regionChannel = AndroidNotificationChannel(
 
 DateTime _lastAdTime = DateTime.fromMillisecondsSinceEpoch(0);
 Map<String, String> _adConfig = {
-  'ads': '5878584013742794', 
-  'banner_id': '7832732481',
-  'interstitial_id': '5178192130',
-  'rewarded_id': '5537741639',
-  'web_slot_id': '6311371130',
+  'ads': dotenv.env['ADMOB_PUBLISHER_ID'] ?? '5878584013742794',
+  'banner_id': dotenv.env['ADMOB_BANNER_ID'] ?? '7832732481',
+  'interstitial_id': dotenv.env['ADMOB_INTERSTITIAL_ID'] ?? '5178192130',
+  'rewarded_id': dotenv.env['ADMOB_REWARDED_ID'] ?? '5537741639',
+  'web_slot_id': dotenv.env['ADMOB_WEB_SLOT_ID'] ?? '6311371130',
 };
 
 String _getAdUnitId(String type) {
@@ -89,6 +90,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
 
   if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)) {
     try { MobileAds.instance.initialize(); } catch (_) {}
@@ -214,7 +216,7 @@ class _AllegrettoAppState extends State<AllegrettoApp> {
     if (user == null) return;
     try {
       String? token = await FirebaseMessaging.instance.getToken(
-        vapidKey: kIsWeb ? 'BGOx7mqdHPaP-Vc8DbRblmReVUp26RMPGrLueVi1yBhWXJTID4fKfAHGgYemzUXP26D5uVIJICy-QyDPAH90wqA' : null
+        vapidKey: kIsWeb ? dotenv.env['FCM_VAPID_KEY'] : null
       );
       if (token != null) {
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
@@ -1857,7 +1859,7 @@ class _DeveloperUploadPageState extends State<DeveloperUploadPage> with SingleTi
   Future<void> _deleteItem(DocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
     final pass = await showDialog<String>(context: context, builder: (cxt) => AlertDialog(title: const Text('Confirm Deletion'), content: TextField(obscureText: true, onSubmitted: (v) => Navigator.pop(cxt, v), decoration: const InputDecoration(hintText: 'Admin Key Required')), actions: [TextButton(onPressed: () => Navigator.pop(cxt), child: const Text('Cancel'))]));
-    if (pass == 'AllegrettoAdmin2024') {
+    if (pass == (dotenv.env['ADMIN_PASSWORD'] ?? 'AllegrettoAdmin2024')) {
       try {
         if (data['isFolder'] != true) await FirebaseStorage.instance.ref(data['fullPath']).delete();
         await doc.reference.delete();

@@ -41,6 +41,7 @@ dependencies:
   google_api_availability: ^5.0.1
   mobile_scanner: ^5.2.3
   image_picker: ^1.1.2
+  flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   change_app_package_name: ^1.5.0
@@ -61,3 +62,4 @@ flutter:
   assets:
     - assets/icon/app_icon.png
     - assets/icon/allegretto.png
+    - .env
