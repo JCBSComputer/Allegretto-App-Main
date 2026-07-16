@@ -1934,14 +1934,22 @@ class _AllegrettoWebViewState extends State<AllegrettoWebView> {
   void initState() {
     super.initState();
     if (!kIsWeb) {
-      _controller = WebViewController()..setJavaScriptMode(JavaScriptMode.unrestricted)..loadRequest(Uri.parse(widget.url))..setNavigationDelegate(NavigationDelegate(onNavigationRequest: (req) {
-        if (req.url.toLowerCase().endsWith('.pdf')) { widget.onOpenPDF(req.url); return NavigationDecision.prevent; }
-        return NavigationDecision.navigate;
-      }));
+      _controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(Colors.white)
+        ..loadRequest(Uri.parse(widget.url))
+        ..setNavigationDelegate(NavigationDelegate(
+          onPageFinished: (_) {},
+          onWebResourceError: (e) => debugPrint('WebView error: $e'),
+          onNavigationRequest: (req) {
+            if (req.url.toLowerCase().endsWith('.pdf')) { widget.onOpenPDF(req.url); return NavigationDecision.prevent; }
+            return NavigationDecision.navigate;
+          },
+        ));
     }
   }
   @override
-  Widget build(BuildContext context) => Column(children: [Padding(padding: const EdgeInsets.all(8.0), child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.bold))), Expanded(child: kIsWeb ? HtmlElementView(viewType: widget.viewType) : WebViewWidget(controller: _controller!))]);
+  Widget build(BuildContext context) => Column(children: [Padding(padding: const EdgeInsets.all(8.0), child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.bold))), Expanded(child: Container(color: Colors.white, child: kIsWeb ? HtmlElementView(viewType: widget.viewType) : (_controller != null ? WebViewWidget(controller: _controller!) : const Center(child: CircularProgressIndicator()))))]);
 }
 
 class AdBannerWidget extends StatefulWidget {

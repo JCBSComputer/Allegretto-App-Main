@@ -47,7 +47,11 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
 	</dict>
+	<key>io.flutter.embedded_views_preview</key>
+	<true/>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-5878584013742794~5676885580</string>
 	<key>SKAdNetworkItems</key>
