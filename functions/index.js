@@ -1,5 +1,7 @@
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const { GoogleAuth } = require("google-auth-library");
 
 admin.initializeApp();
 
@@ -216,4 +218,67 @@ exports.notifyRegionUpdate = onDocumentUpdated({
         } catch (e) { console.error("Region Notify Error:", e); }
     }
     return null;
+});
+
+// ── Purchase verification ──────────────────────────────────────────────────
+
+const PACKAGE_NAME = "za.co.allegretto.eisteddfod";
+const PRODUCT_MAP = { ads_removal_monthly: "is_subscribed", pro_offline_monthly: "is_pro" };
+
+async function verifyGooglePlayPurchase(productId, purchaseToken) {
+    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/androidpublisher"] });
+    const client = await auth.getClient();
+    const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${PACKAGE_NAME}/purchases/subscriptions/${productId}/tokens/${purchaseToken}`;
+    const response = await client.request({ url });
+    const data = response.data;
+    if (data.purchaseState !== 0) return null;
+    return data.expiryTimeMillis ? Number(data.expiryTimeMillis) : null;
+}
+
+async function verifyAppleReceipt(receiptData) {
+    const sharedSecret = process.env.APPSTORE_SHARED_SECRET;
+    const response = await fetch("https://buy.itunes.apple.com/verifyReceipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ "receipt-data": receiptData, password: sharedSecret }),
+    });
+    const data = await response.json();
+    if (data.status !== 0) return null;
+    const latest = data.latest_receipt_info?.[0];
+    return latest ? Number(latest.expires_date_ms) : null;
+}
+
+exports.verifyPurchase = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "You must be logged in.");
+    const { productId, purchaseToken, platform } = request.data;
+    if (!productId || !purchaseToken || !platform) {
+        throw new HttpsError("invalid-argument", "Missing productId, purchaseToken, or platform.");
+    }
+    const field = PRODUCT_MAP[productId];
+    if (!field) throw new HttpsError("invalid-argument", `Unknown product: ${productId}`);
+
+    let expiryTimeMillis = null;
+    try {
+        if (platform === "android") {
+            expiryTimeMillis = await verifyGooglePlayPurchase(productId, purchaseToken);
+        } else if (platform === "ios") {
+            expiryTimeMillis = await verifyAppleReceipt(purchaseToken);
+        } else {
+            throw new HttpsError("invalid-argument", `Unsupported platform: ${platform}`);
+        }
+    } catch (err) {
+        console.error(`Receipt verification failed for user ${uid}:`, err);
+        throw new HttpsError("internal", `Verification failed: ${err.message}`);
+    }
+
+    if (expiryTimeMillis === null) throw new HttpsError("failed-precondition", "Purchase not valid or already consumed.");
+
+    await admin.firestore().collection("users").doc(uid).update({
+        [field]: true,
+        subscriptionExpiryDate: admin.firestore.Timestamp.fromMillis(expiryTimeMillis),
+        lastPaymentDate: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { success: true, productId };
 });

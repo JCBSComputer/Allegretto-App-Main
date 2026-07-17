@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,7 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -67,6 +69,10 @@ Map<String, String> _adConfig = {
   'rewarded_id': dotenv.env['ADMOB_REWARDED_ID'] ?? '5537741639',
   'web_slot_id': dotenv.env['ADMOB_WEB_SLOT_ID'] ?? '6311371130',
 };
+
+// In-app Purchase product IDs (configure in Google Play Console / App Store Connect)
+const String _kProductRemoveAds = 'ads_removal_monthly';
+const String _kProductPro = 'pro_offline_monthly';
 
 String _getAdUnitId(String type) {
   if (kDebugMode) {
@@ -1423,9 +1429,15 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   bool _allowDataSale = true;
   String _ver = "";
   final u = FirebaseAuth.instance.currentUser;
+  StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
+  List<ProductDetails> _products = [];
+  bool _isLoadingProducts = false;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() { super.initState(); _load(); _initIap(); }
+
+  @override
+  void dispose() { _purchaseSubscription?.cancel(); super.dispose(); }
   void _load() async {
     final info = await PackageInfo.fromPlatform(); setState(() => _ver = "${info.version}+${info.buildNumber}");
     if (u != null) {
@@ -1446,13 +1458,82 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
       if (u != null) await FirebaseFirestore.instance.collection('users').doc(u!.uid).update({if (plan == 'Ads') 'is_subscribed': true, if (plan == 'Pro') 'is_pro': true, 'lastPaymentDate': FieldValue.serverTimestamp()});
       return;
     }
+    final productId = plan == 'Pro' ? _kProductPro : _kProductRemoveAds;
+    final idx = _products.indexWhere((p) => p.id == productId);
+    if (idx == -1) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Product not available in store'), backgroundColor: const Color(0xFFD32F2F)));
+      return;
+    }
+    try {
+      InAppPurchase.instance.buyNonConsumable(purchaseParam: PurchaseParam(productDetails: _products[idx]));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Purchase failed: $e'), backgroundColor: const Color(0xFFD32F2F)));
+    }
   }
 
   Future<void> _handleUnsubscribe(String plan) async {
     final confirm = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('Confirm'), content: Text('Are you sure?'), actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('No')), TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Yes'))]));
     if (confirm == true && u != null) {
       await FirebaseFirestore.instance.collection('users').doc(u!.uid).update({if (plan == 'Ads') 'is_subscribed': false, if (plan == 'Pro') 'is_pro': false});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unsubscribed. Restore purchases to re-enable.'), backgroundColor: Colors.orange));
     }
+  }
+
+  Future<void> _initIap() async {
+    if (kIsWeb) return;
+    final available = await InAppPurchase.instance.isAvailable();
+    if (!available) return;
+    setState(() => _isLoadingProducts = true);
+    final response = await InAppPurchase.instance.queryProductDetails({_kProductRemoveAds, _kProductPro});
+    if (mounted) setState(() { _products = response.productDetails; _isLoadingProducts = false; });
+    _purchaseSubscription = InAppPurchase.instance.purchaseStream.listen(_handlePurchaseUpdate, onError: (_) {});
+    await InAppPurchase.instance.restorePurchases();
+  }
+
+  Future<void> _handlePurchaseUpdate(List<PurchaseDetails> purchases) async {
+    for (var purchase in purchases) {
+      if (purchase.status == PurchaseStatus.purchased || purchase.status == PurchaseStatus.restored) {
+        if (purchase.pendingCompletePurchase) await InAppPurchase.instance.completePurchase(purchase);
+        if (u == null) continue;
+        if (_isDeveloper || kDebugMode) {
+          final updates = <String, dynamic>{};
+          if (purchase.productID == _kProductRemoveAds) updates['is_subscribed'] = true;
+          else if (purchase.productID == _kProductPro) updates['is_pro'] = true;
+          updates['lastPaymentDate'] = FieldValue.serverTimestamp();
+          updates['subscriptionExpiryDate'] = Timestamp.fromDate(DateTime.now().add(const Duration(days: 365)));
+          await FirebaseFirestore.instance.collection('users').doc(u!.uid).update(updates);
+        } else {
+          try {
+            final platform = defaultTargetPlatform == TargetPlatform.android ? 'android' : 'ios';
+            String token = purchase.verificationData.serverVerificationData;
+            if (platform == 'android') {
+              final decoded = jsonDecode(token);
+              token = decoded['purchaseToken'] as String;
+            }
+            await FirebaseFunctions.instance.httpsCallable('verifyPurchase').call({
+              'productId': purchase.productID,
+              'purchaseToken': token,
+              'platform': platform,
+            });
+          } catch (e) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Verification failed: $e'), backgroundColor: const Color(0xFFD32F2F)));
+            continue;
+          }
+        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Purchase successful!'), backgroundColor: Colors.green));
+      } else if (purchase.status == PurchaseStatus.error) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Purchase failed: ${purchase.error?.message ?? "Unknown"}'), backgroundColor: const Color(0xFFD32F2F)));
+      }
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    if (kIsWeb) return;
+    final available = await InAppPurchase.instance.isAvailable();
+    if (!available) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('In-app purchases not available'), backgroundColor: const Color(0xFFD32F2F))); return; }
+    setState(() => _isLoadingProducts = true);
+    await InAppPurchase.instance.restorePurchases();
+    if (mounted) setState(() => _isLoadingProducts = false);
   }
 
   @override
@@ -1517,6 +1598,14 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         _subscriptionItem('Remove Ads', 'R 16,99', _isSubscribed, () => _handleSubscription('Ads'), () => _handleUnsubscribe('Ads')),
         const SizedBox(height: 12),
         _subscriptionItem('Pro: Offline & No Ads', 'R 33,99', _isPro, () => _handleSubscription('Pro'), () => _handleUnsubscribe('Pro')),
+        const SizedBox(height: 16),
+        Center(
+          child: TextButton.icon(
+            onPressed: _isLoadingProducts ? null : _restorePurchases,
+            icon: const Icon(Icons.restore, color: Colors.white54),
+            label: Text(_isLoadingProducts ? 'Loading...' : 'Restore Purchases', style: const TextStyle(color: Colors.white54)),
+          ),
+        ),
         const SizedBox(height: 32),
         Text('Preferences', style: headerStyle),
         const SizedBox(height: 12),
