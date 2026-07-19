@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "allegretto-dff3d"
-  }
+  },
+  "targets": {
+    "allegretto-dff3d": {
+      "hosting": {
+        "desktop": [
+          "allegretto-dff3d"
+        ],
+        "iphone": [
+          "allegretto-iphone"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
