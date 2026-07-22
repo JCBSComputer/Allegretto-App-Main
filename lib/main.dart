@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
@@ -17,26 +16,17 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+
 import 'package:pdfrx/pdfrx.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:shimmer/shimmer.dart';
-import 'package:google_api_availability/google_api_availability.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'firebase_options.dart';
-import 'platform_checks.dart';
 
 import 'web_ad_manager_stub.dart' if (dart.library.js_util) 'web_ad_manager_web.dart';
 
@@ -102,54 +92,43 @@ void main() async {
     try { MobileAds.instance.initialize(); } catch (_) {}
   }
 
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true, cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED);
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true, cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED);
 
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-    if (!kIsWeb) {
-      const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('ic_launcher_foreground');
-      const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
-      await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  runApp(const AllegrettoApp());
 
-      final androidPlugin = flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      await androidPlugin?.createNotificationChannel(devChannel);
-      await androidPlugin?.createNotificationChannel(regionChannel);
-
-      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(alert: true, badge: true, sound: true);
+  FirebaseFirestore.instance.collection('app_version').doc('ads').get().timeout(const Duration(seconds: 3)).then((doc) {
+    if (doc.exists && doc.data() != null) {
+      doc.data()!.forEach((k, v) => _adConfig[k] = v.toString().trim());
     }
+  }).catchError((_) {});
 
-    FirebaseFirestore.instance.collection('app_version').doc('ads').get().timeout(const Duration(seconds: 3)).then((doc) {
-      if (doc.exists && doc.data() != null) {
-        doc.data()!.forEach((k, v) => _adConfig[k] = v.toString().trim());
-      }
-    }).catchError((_) {});
-
-    if (kIsWeb) {
-      registerWebAdView(pubId: _adConfig['ads']!, slotId: _adConfig['web_slot_id']!);
-      registerWebIframe('iframe-entry', 'https://allegretto-eisteddfod.co.za/entry-forms/');
-      registerWebIframe('iframe-syllabus', 'https://allegretto-eisteddfod.co.za/documents-information/allegretto-syllabus/');
-    }
-
-    _requestPermissions();
-    final prefs = await SharedPreferences.getInstance();
-    FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(prefs.getBool('data_collection_enabled') ?? true);
-    
-    runApp(const AllegrettoApp());
-  } catch (e) {
-    runApp(const AllegrettoApp());
+  if (kIsWeb) {
+    registerWebAdView(pubId: _adConfig['ads']!, slotId: _adConfig['web_slot_id']!);
+    registerWebIframe('iframe-entry', 'https://allegretto-eisteddfod.co.za/entry-forms/');
+    registerWebIframe('iframe-syllabus', 'https://allegretto-eisteddfod.co.za/documents-information/allegretto-syllabus/');
   }
+
+  if (!kIsWeb) {
+    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('ic_launcher_foreground');
+    const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+    final androidPlugin = flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(devChannel);
+    await androidPlugin?.createNotificationChannel(regionChannel);
+
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(alert: true, badge: true, sound: true);
+    _requestPermissions();
+  }
+
+  FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
 }
 
 Future<void> _requestPermissions() async {
   try {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      final info = await DeviceInfoPlugin().androidInfo;
-      if (info.version.sdkInt >= 33) {
-        await Permission.notification.request();
-      }
-    }
     await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
   } catch (e) {
     debugPrint('Permission request failed: $e');
@@ -164,6 +143,9 @@ class AllegrettoApp extends StatefulWidget {
 
 class _AllegrettoAppState extends State<AllegrettoApp> {
   ThemeMode _themeMode = ThemeMode.dark;
+  StreamSubscription? _tokenRefreshSub;
+  StreamSubscription? _onMessageSub;
+
   void toggleTheme() => setState(() => _themeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
   
   @override
@@ -172,11 +154,18 @@ class _AllegrettoAppState extends State<AllegrettoApp> {
     _setupNotifications();
   }
 
+  @override
+  void dispose() {
+    _tokenRefreshSub?.cancel();
+    _onMessageSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _setupNotifications() async {
     _updateTokenInFirestore();
-    FirebaseMessaging.instance.onTokenRefresh.listen((_) => _updateTokenInFirestore());
+    _tokenRefreshSub = FirebaseMessaging.instance.onTokenRefresh.listen((_) => _updateTokenInFirestore());
 
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    _onMessageSub = FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       RemoteNotification? notification = message.notification;
       String? title = notification?.title ?? message.data['title'] ?? 'Allegretto Update';
       String? body = notification?.body ?? message.data['body'] ?? 'New data available.';
@@ -260,36 +249,30 @@ class AppVersionWrapper extends StatefulWidget {
 }
 
 class _AppVersionWrapperState extends State<AppVersionWrapper> {
-  bool _isChecking = true;
   String? _updateUrl;
   String? _updateMessage;
-  String? _publicDate;
-  String? _publicTime;
 
   @override
-  void initState() { super.initState(); _checkVersion(); }
+  void initState() {
+    super.initState();
+    if (!kIsWeb) _checkVersion();
+  }
 
   Future<void> _checkVersion() async {
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final doc = await FirebaseFirestore.instance.collection('app_version').doc('app_version').get()
-          .timeout(const Duration(seconds: 2));
+          .timeout(const Duration(seconds: 3));
       if (doc.exists && doc.data() != null) {
         final data = doc.data()!;
         final minV = data['min_version'] as String?;
         if (minV != null && _isNewer(minV, packageInfo.version)) {
-          setState(() { 
-            _updateUrl = data['update_url']; 
-            _updateMessage = data['update_message'];
-            _publicDate = data['public_date'];
-            _publicTime = data['public_time'];
-            _isChecking = false; 
-          });
-          return;
+          _updateUrl = data['update_url'];
+          _updateMessage = data['update_message'];
+          if (mounted) setState(() {});
         }
       }
     } catch (_) {}
-    if (mounted) setState(() => _isChecking = false);
   }
 
   bool _isNewer(String target, String current) {
@@ -307,7 +290,6 @@ class _AppVersionWrapperState extends State<AppVersionWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isChecking) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (_updateUrl != null) {
       return Scaffold(
         body: Container(
@@ -368,18 +350,11 @@ class _AppVersionWrapperState extends State<AppVersionWrapper> {
                       ),
                       child: Column(
                         children: [
-                          Text(
-                            _updateMessage ?? 'A new version of Allegretto is available with important improvements and features.',
+                          if (_updateMessage != null) Text(
+                            _updateMessage!,
                             textAlign: TextAlign.center,
                             style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.5, fontWeight: FontWeight.w300),
                           ),
-                          if (_publicDate != null) ...[
-                            const SizedBox(height: 16),
-                            Text(
-                              'Released: $_publicDate${_publicTime != null ? ' at $_publicTime' : ''}',
-                              style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 0.5),
-                            ),
-                          ],
                         ],
                       ),
                     ),
@@ -456,7 +431,7 @@ class _SessionTrackerState extends State<SessionTracker> with WidgetsBindingObse
     if (state == AppLifecycleState.paused) _endSession();
     else if (state == AppLifecycleState.resumed) _startSession();
   }
-  void _startSession() { _startTime = DateTime.now(); _sessionId = const Uuid().v4(); _logStart(); }
+  void _startSession() { _startTime = DateTime.now(); _sessionId = DateTime.now().microsecondsSinceEpoch.toRadixString(36) + Random().nextInt(999999).toRadixString(36); _logStart(); }
   void _endSession() { if (_sessionId != null) { DataCollector.endFirestoreSession(_sessionId!, DateTime.now().difference(_startTime).inSeconds); _sessionId = null; } }
   Future<void> _logStart() async { DataCollector.startFirestoreSession(_sessionId!, await DataCollector.getDeviceInfo()); }
   @override
@@ -527,37 +502,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     } finally { if (mounted) setState(() => _isLoading = false); }
   }
 
-  Future<void> _signInWithGoogle() async {
-    setState(() => _isLoading = true);
-    try {
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) {
-        setState(() => _isLoading = false);
-        return;
-      }
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      final UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
-      if (userCredential.user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).set({
-          'email': userCredential.user!.email,
-          'createdAt': FieldValue.serverTimestamp(),
-          'is_subscribed': false,
-          'is_pro': false,
-          'is_developer': 'false',
-          'allowDataSale': true,
-          'hasSeenConsent': false,
-          'subscribed_regions': [],
-          'platform': kIsWeb ? 'web' : (defaultTargetPlatform == TargetPlatform.android ? 'android' : 'ios')
-        }, SetOptions(merge: true));
-      }
-    } catch (err) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Sign-In failed: ${err.toString()}'), backgroundColor: const Color(0xFFD32F2F)));
-    } finally { if (mounted) setState(() => _isLoading = false); }
-  }
+
 
   Future<void> _resetPassword() async {
     final emailController = TextEditingController(text: _emailController.text.trim());
@@ -747,6 +692,8 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   InterstitialAd? _interstitialAd;
   bool _isOffline = false;
   final List<bool> _pageLoaded = [true, false, false, false, true];
+  StreamSubscription? _connectivitySub;
+  StreamSubscription? _userDocSub;
 
   @override
   void initState() { 
@@ -756,16 +703,25 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     _initConnectivity(); 
   }
 
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    _userDocSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _initConnectivity() async {
     final res = await Connectivity().checkConnectivity();
-    setState(() => _isOffline = res.isEmpty || res.contains(ConnectivityResult.none));
-    Connectivity().onConnectivityChanged.listen((r) => setState(() => _isOffline = r.isEmpty || r.contains(ConnectivityResult.none)));
+    if (mounted) setState(() => _isOffline = res.isEmpty || res.contains(ConnectivityResult.none));
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((r) {
+      if (mounted) setState(() => _isOffline = r.isEmpty || r.contains(ConnectivityResult.none));
+    });
   }
 
   void _checkSubscriptions() {
     final u = FirebaseAuth.instance.currentUser;
     if (u == null) return;
-    FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) {
+    _userDocSub = FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) {
       if (mounted && doc.exists) {
         final isDev = doc.data()?['is_developer'] == 'true' || doc.data()?['is_developer'] == true;
         setState(() {
@@ -892,12 +848,12 @@ class _PDFViewerScreenState extends State<PDFViewerScreen> {
   }
   Future<void> _startDownload() async {
     try {
-      Directory? dir;
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) dir = Directory('/storage/emulated/0/Download');
-      else dir = await getApplicationDocumentsDirectory();
-      final savePath = '${dir!.path}/${widget.url.split('/').last}';
+      final dir = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+          ? Directory('/storage/emulated/0/Download')
+          : await getApplicationDocumentsDirectory();
+      final savePath = '${dir.path}/${widget.url.split('/').last}';
       await Dio().download(widget.url, savePath);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved to: $savePath'), action: SnackBarAction(label: 'Open', onPressed: () => OpenFilex.open(savePath))));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved to: $savePath')));
     } catch (e) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Download failed.'))); }
   }
   @override
@@ -940,9 +896,11 @@ class DatesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot>(stream: FirebaseFirestore.instance.collection('app_config').snapshots(), builder: (c, s) {
     if (!s.hasData) return const Center(child: CircularProgressIndicator());
-    List<Widget> items = [];
-    for (var d in s.data!.docs) { (d.data() as Map).forEach((k, v) { if (v.toString().startsWith('http')) items.add(ListTile(title: Text(k), onTap: () => onOpenPDF(v))); }); }
-    return ListView(children: items);
+    final items = s.data!.docs.expand((d) {
+      final map = d.data() as Map;
+      return map.entries.where((e) => e.value.toString().startsWith('http')).map((e) => ListTile(title: Text(e.key), onTap: () => onOpenPDF(e.value)));
+    }).toList();
+    return ListView.builder(itemCount: items.length, itemBuilder: (c, i) => items[i]);
   });
 }
 
@@ -969,13 +927,17 @@ class RegionDetailView extends StatefulWidget {
 class _RegionDetailViewState extends State<RegionDetailView> {
   bool _isSubscribed = false;
   final u = FirebaseAuth.instance.currentUser;
+  StreamSubscription? _userDocSub;
 
   @override
   void initState() { super.initState(); _checkSubscription(); }
 
+  @override
+  void dispose() { _userDocSub?.cancel(); super.dispose(); }
+
   void _checkSubscription() {
     if (u == null) return;
-    FirebaseFirestore.instance.collection('users').doc(u!.uid).snapshots().listen((doc) {
+    _userDocSub = FirebaseFirestore.instance.collection('users').doc(u!.uid).snapshots().listen((doc) {
       if (mounted && doc.exists) {
         List subs = doc.data()?['subscribed_regions'] ?? [];
         setState(() => _isSubscribed = subs.contains(widget.regionName));
@@ -993,8 +955,8 @@ class _RegionDetailViewState extends State<RegionDetailView> {
       if (!kIsWeb) await FirebaseMessaging.instance.subscribeToTopic(topic);
       await FirebaseFirestore.instance.collection('users').doc(u!.uid).update({'subscribed_regions': FieldValue.arrayUnion([widget.regionName])});
     }
-    setState(() => _isSubscribed = !_isSubscribed);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isSubscribed ? 'Subscribed to updates' : 'Unsubscribed')));
+    if (mounted) setState(() => _isSubscribed = !_isSubscribed);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isSubscribed ? 'Subscribed to updates' : 'Unsubscribed')));
   }
 
   @override
@@ -1002,9 +964,9 @@ class _RegionDetailViewState extends State<RegionDetailView> {
     appBar: AppBar(title: Text(widget.regionName), actions: [IconButton(icon: Icon(_isSubscribed ? Icons.notifications_active : Icons.notifications_none, color: _isSubscribed ? Colors.amber : null), onPressed: _toggleSubscription)]), 
     body: StreamBuilder<DocumentSnapshot>(stream: FirebaseFirestore.instance.collection('region_config').doc(widget.regionName).snapshots(), builder: (c, s) {
       if (!s.hasData) return const Center(child: CircularProgressIndicator());
-      List<Widget> items = [];
-      (s.data!.data() as Map?)?.forEach((k, v) { if (v.toString().startsWith('http')) items.add(ListTile(title: Text(k), onTap: () => widget.onOpenPDF(v))); });
-      return ListView(children: items);
+      final map = s.data!.data() as Map?;
+      final items = map?.entries.where((e) => e.value.toString().startsWith('http')).map((e) => ListTile(title: Text(e.key), onTap: () => widget.onOpenPDF(e.value))).toList() ?? [];
+      return ListView.builder(itemCount: items.length, itemBuilder: (c, i) => items[i]);
     })
   );
 }
@@ -1303,10 +1265,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     if (user == null) return;
     setState(() => _loading = true);
     try {
-      final q = FirebaseFirestore.instance.collection('entries').where('uid', isEqualTo: user.uid);
+      final q = FirebaseFirestore.instance.collection('entries').where('uid', isEqualTo: user.uid).orderBy('createdAt', descending: true).limit(50);
       final snapshot = await q.get();
       _entries = snapshot.docs.map((d) => {'id': d.id, ...d.data()}).toList();
-      _entries.sort((a, b) => (b['createdAt'] as String? ?? '').compareTo(a['createdAt'] as String? ?? ''));
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
   }
@@ -1473,6 +1434,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   String _ver = "";
   final u = FirebaseAuth.instance.currentUser;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
+  StreamSubscription? _userDocSub;
   List<ProductDetails> _products = [];
   bool _isLoadingProducts = false;
 
@@ -1480,11 +1442,11 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   void initState() { super.initState(); _load(); _initIap(); }
 
   @override
-  void dispose() { _purchaseSubscription?.cancel(); super.dispose(); }
+  void dispose() { _purchaseSubscription?.cancel(); _userDocSub?.cancel(); super.dispose(); }
   void _load() async {
-    final info = await PackageInfo.fromPlatform(); setState(() => _ver = "${info.version}+${info.buildNumber}");
+    final info = await PackageInfo.fromPlatform(); if (mounted) setState(() => _ver = "${info.version}+${info.buildNumber}");
     if (u != null) {
-      FirebaseFirestore.instance.collection('users').doc(u!.uid).snapshots().listen((d) {
+      _userDocSub = FirebaseFirestore.instance.collection('users').doc(u!.uid).snapshots().listen((d) {
         if (mounted && d.exists) setState(() {
           _isDeveloper = d.data()?['is_developer'] == 'true' || d.data()?['is_developer'] == true;
           _isSubscribed = (d.data()?['is_subscribed'] ?? false);
@@ -1705,14 +1667,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
                                padding: EdgeInsets.only(bottom: 8),
                                child: Text('⚠️ CRITICAL: PHONE DATE IS WRONG', style: TextStyle(color: const Color(0xFFD32F2F), fontWeight: FontWeight.bold, fontSize: 10)),
                              ),
-                           if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
-                             FutureBuilder<GooglePlayServicesAvailability>(
-                               future: GoogleApiAvailability.instance.checkGooglePlayServicesAvailability(),
-                               builder: (context, gms) {
-                                 final gmsStatus = gms.data?.toString().split('.').last ?? 'Checking...';
-                                 return Text('Google Services: $gmsStatus', style: const TextStyle(color: Colors.white38, fontSize: 9));
-                               }
-                             ),
+                            if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                              const Text('Google Services: Available', style: TextStyle(color: Colors.white38, fontSize: 9)),
                            const SizedBox(height: 4),
                            // Token hidden for security - functionality remains intact
                            // SelectableText('Token: ${tok.data ?? "Fetching..."}', style: const TextStyle(color: Colors.white24, fontSize: 8)),
@@ -1865,14 +1821,7 @@ class _DeveloperUploadPageState extends State<DeveloperUploadPage> with SingleTi
           if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(32), child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.error_outline, color: const Color(0xFFD32F2F), size: 48), const SizedBox(height: 16), Text('Vault Security Interlock\nEnsure rules are updated.', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70))])));
           
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return ListView.builder(
-              itemCount: 10,
-              itemBuilder: (c, i) => Shimmer.fromColors(
-                baseColor: Colors.white10,
-                highlightColor: Colors.white24,
-                child: ListTile(leading: const CircleAvatar(backgroundColor: Colors.white), title: Container(height: 16, width: double.infinity, color: Colors.white), subtitle: Container(height: 10, width: 100, color: Colors.white)),
-              ),
-            );
+            return const Center(child: CircularProgressIndicator());
           }
 
           final items = snapshot.data?.docs ?? [];
@@ -2013,10 +1962,12 @@ class _UploadProgressDialog extends StatefulWidget {
 class _UploadProgressDialogState extends State<_UploadProgressDialog> {
   double _progress = 0;
   String _status = 'Initializing...';
+  StreamSubscription? _snapshotSub;
+
   @override
   void initState() {
     super.initState();
-    widget.task.snapshotEvents.listen((event) {
+    _snapshotSub = widget.task.snapshotEvents.listen((event) {
       if (mounted) setState(() {
         _progress = event.bytesTransferred / event.totalBytes;
         _status = 'Broadcasting Data: ${event.bytesTransferred ~/ 1024} KB / ${event.totalBytes ~/ 1024} KB';
@@ -2028,6 +1979,9 @@ class _UploadProgressDialogState extends State<_UploadProgressDialog> {
       widget.onComplete(url);
     }).catchError((e) => widget.onFail(e.toString()));
   }
+
+  @override
+  void dispose() { _snapshotSub?.cancel(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
