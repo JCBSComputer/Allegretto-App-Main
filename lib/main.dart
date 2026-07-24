@@ -958,17 +958,171 @@ class OfflineLibraryPage extends StatefulWidget {
 
 class _OfflineLibraryPageState extends State<OfflineLibraryPage> {
   List<File> _files = [];
+
   @override
   void initState() { super.initState(); _load(); }
+
   Future<void> _load() async {
     final dir = await getApplicationDocumentsDirectory();
     setState(() => _files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.pdf')).toList());
   }
+
+  String _fileName(String path) {
+    final name = path.split(Platform.pathSeparator).last;
+    return name.replaceAll('.pdf', '');
+  }
+
+  String _fileSize(File f) {
+    final bytes = f.lengthSync();
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1048576) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1048576).toStringAsFixed(1)} MB';
+  }
+
+  String _fileDate(File f) {
+    final modified = f.lastModifiedSync();
+    return '${modified.day.toString().padLeft(2, '0')}/${modified.month.toString().padLeft(2, '0')}/${modified.year}';
+  }
+
+  void _confirmDelete(File file) {
+    showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: AppColors.mediumBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Remove PDF', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        content: Text(
+          'Remove "${_fileName(file.path)}" from your offline library?',
+          style: const TextStyle(color: AppColors.textGreyLight),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel', style: TextStyle(color: AppColors.textGreyLight))),
+          TextButton(
+            onPressed: () { file.deleteSync(); Navigator.pop(c); _load(); },
+            child: const Text('Remove', style: TextStyle(color: AppColors.redAccent, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Offline Library')),
-    body: ListView.builder(itemCount: _files.length, itemBuilder: (c, i) => ListTile(leading: Icon(Icons.picture_as_pdf, color: AppColors.redAccent), title: Text(_files[i].path.split('/').last), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => PDFViewerScreen(path: _files[i].path, url: '', isPro: true))), trailing: IconButton(icon: const Icon(Icons.delete), onPressed: () { _files[i].deleteSync(); _load(); }))),
-  );
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.darkestBg,
+      appBar: AppBar(
+        backgroundColor: AppColors.darkestBg,
+        elevation: 0,
+        leading: IconButton(icon: const Icon(Icons.arrow_back, color: AppColors.textGreyLight), onPressed: () => Navigator.pop(context)),
+        title: const Text('Offline Library', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 20)),
+        actions: [
+          if (_files.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: AppColors.redAccent, borderRadius: BorderRadius.circular(12)),
+                  child: Text('${_files.length}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: _files.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceDark,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.bookmark_border, size: 48, color: AppColors.textGrey),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('No PDFs saved', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  const Text('PDFs you save for offline reading\nwill appear here', textAlign: TextAlign.center, style: TextStyle(color: AppColors.textGrey, fontSize: 14, height: 1.5)),
+                ],
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              itemCount: _files.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (c, i) {
+                final file = _files[i];
+                return GestureDetector(
+                  onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => PDFViewerScreen(path: file.path, url: '', isPro: true))),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.cardBg,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white.withOpacity(0.05)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.redDarker, AppColors.redAccent]),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Center(child: Icon(Icons.picture_as_pdf, color: Colors.white, size: 26)),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _fileName(file.path),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Icon(Icons.sd_storage, size: 13, color: AppColors.textGrey.withOpacity(0.7)),
+                                    const SizedBox(width: 4),
+                                    Text(_fileSize(file), style: TextStyle(color: AppColors.textGrey.withOpacity(0.7), fontSize: 12)),
+                                    const SizedBox(width: 12),
+                                    Icon(Icons.calendar_today, size: 13, color: AppColors.textGrey.withOpacity(0.7)),
+                                    const SizedBox(width: 4),
+                                    Text(_fileDate(file), style: TextStyle(color: AppColors.textGrey.withOpacity(0.7), fontSize: 12)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _confirmDelete(file),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceDark,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.delete_outline, size: 18, color: AppColors.textGrey),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
 }
 
 class DatesPage extends StatelessWidget {
